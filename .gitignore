@@ -1,0 +1,11 @@
+tmp/
+figs/
+data/
+models*
+timit_features/
+*.pt
+*.png
+toy_model/models*
+toy_model/tmp
+toy_model/figs
+toy_model/data

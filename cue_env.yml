@@ -1,0 +1,40 @@
+name: cue_env
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - pip
+  - ipykernel
+  - ffmpeg
+  
+  # --- Machine Learning Core ---
+  - pytorch 
+  - torchvision
+  - pytorch-cuda
+  - scikit-learn
+  - pandas
+  - numpy
+  - scipy
+  - matplotlib
+  - seaborn
+  - tqdm
+  
+  # --- Speech & Audio Processing ---
+  - librosa          # Standard for audio analysis
+  
+  # --- Transformers & Datasets ---
+  - transformers
+  - datasets
+  - tokenizers
+  - huggingface_hub
+  - safetensors
+
+  - pip:
+    - soundfile        # For reading/writing audio
+    - python-speech-features
+    - praat-parselmouth
+    - pooch            # Often required by librosa for sample data
+    - evaluate         # Common companion for transformers/datasets
