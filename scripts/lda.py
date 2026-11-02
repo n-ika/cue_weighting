@@ -19,7 +19,8 @@ def get_val_results(val_loader, model, device, mapping, meta_df):
         #    'logvar':[], 
            'vowel':[], 
         #    'orig':[], 
-           'f1':[], 'dur':[]
+           'f1':[], 
+           'dur':[]
            }
     model.eval()
     with torch.no_grad():
@@ -27,7 +28,6 @@ def get_val_results(val_loader, model, device, mapping, meta_df):
             label_vowel = [label.split('/')[-1].split('_')[1] for label in labels]
             num_label = [mapping[vowel] for vowel in label_vowel]
             data = data.to(device)
-            batch,channels,frequency,time = data.shape
             mu, logvar = model.encode(data)
             z = model.reparameterize(mu, logvar)
             res['z'].append(z)
@@ -53,11 +53,14 @@ def train_lda(res):
     return lda_model
 
 
-def get_exp_stim(root, wudf, min_scale, max_scale):
-    type_in = 'mel'
-    n_fft = 512
-    n_mels = 80
-    step = 128
+def get_exp_stim(root, wudf, min_scale, max_scale, type_in):
+    if type_in == 'mfcc' or type_in == 'mel':
+        n_fft = 512
+        n_mels = 80
+        step = 128
+    else:
+        n_fft = 320
+        step = 160
     sr = 16000
     stims = {}
     min_lens = {1:[], 2:[], 3:[],4:[], 5:[], 6:[], 7:[]}
@@ -82,9 +85,9 @@ def get_exp_stim(root, wudf, min_scale, max_scale):
     stims = {key: (vals - min_scale) / (max_scale - min_scale + 1e-6) for key, vals in stims.items()}
     return(stims)
 
-def test_lda(model, lda_model, min_scale, max_scale, wudf, device):
+def test_lda(model, lda_model, min_scale, max_scale, wudf, device, type_in):
     root = "/fs/clip-realspeech/projects/speech_in_noise/me_final/data/orig_test_stimuli/"
-    stims = get_exp_stim(root, wudf, min_scale, max_scale)
+    stims = get_exp_stim(root, wudf, min_scale, max_scale, type_in)
     vals = stims.values()
     keys = stims.keys()
     labels = torch.tensor([[int(key.split('.')[0].split('_')[0][-1]), int(key.split('.')[0].split('_')[1][-1])] for key in keys], dtype=torch.float32)
@@ -95,7 +98,6 @@ def test_lda(model, lda_model, min_scale, max_scale, wudf, device):
     with torch.no_grad():
         for data, label in zip(vals, labels):
             data = data.unsqueeze(0).to(device)
-            batch,channels,frequency,time = data.shape
             mu, logvar = model.encode(data)
             z = model.reparameterize(mu, logvar)
             # x_recon = model.decode(z,batch,time)
@@ -136,6 +138,26 @@ def get_weights(lda_df):
     cw_spec = spec_w/summed
     return cw_dur, cw_spec
 
+def test_lda_real(lda_model, res):
+    d = {'vowel':[], 'pred':[], 'f1':[], 'dur':[]}
+    for i in range(len(res['z'])):
+        z = res['z'][i]
+        pred = lda_model.predict(z.reshape(1, -1))
+        d['f1'].append(res['f1'][i])
+        d['dur'].append(res['dur'][i])
+        d['pred'].append(pred[0])
+        d['vowel'].append(res['vowel'][i].item())
+    d['f1'] = torch.tensor(d['f1'])
+    d['dur'] = torch.tensor(d['dur'])
+
+    lda_df = pd.DataFrame({
+                        'pred': d['pred'],
+                        'f1': d['f1'],
+                        'dur': d['dur'],
+                        'vowel': d['vowel']
+                        })
+    return(lda_df)
+
 # def get_umap(z):
 #     data = np.array(z) #[:,0,:] # 1st dim is 0
 #     reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
@@ -145,7 +167,7 @@ def get_weights(lda_df):
 
 name_corpus = 'tim'
 type_data = 'filt'
-type_input = 'mfcc'
+type_input = 'mel'
 nfft = 512
 step = 128
 dec = False
@@ -181,9 +203,11 @@ fin = {
     'cue': [],
     'beta': [],
     'weight': [],
-    # 'sim_num': [],
-    'cw_dur': [],
-    'cw_spec': []
+    'sim_num': [],
+    'exp_cw_dur': [],
+    'exp_cw_spec': [],
+    'real_cw_dur': [],
+    'real_cw_spec': []
 }
 for cue in ['none', 'formants', 'duration']:
     for beta in [1e-05]: #, 0.0001, 0.001]:
@@ -204,7 +228,7 @@ for cue in ['none', 'formants', 'duration']:
 
                 res = get_val_results(val_loader, model, device, mapping, meta_df)
                 lda_model = train_lda(res)
-                lda_df = test_lda(model, lda_model, min_scale, max_scale, wudf, device)
+                lda_df = test_lda(model, lda_model, min_scale, max_scale, wudf, device, type_input)
                 if lda_df['pred'].unique().ndim == 1:
                     cw_dur, cw_spec = 0.0, 0.0
                 else:
@@ -212,9 +236,13 @@ for cue in ['none', 'formants', 'duration']:
                 fin['cue'].append(cue)
                 fin['beta'].append(beta)
                 fin['weight'].append(weight)
-                # fin['sim_num'].append(sim_num)
-                fin['cw_dur'].append(cw_dur)
-                fin['cw_spec'].append(cw_spec)
+                fin['sim_num'].append(sim_num)
+                fin['exp_cw_dur'].append(cw_dur)
+                fin['exp_cw_spec'].append(cw_spec)
+                df = test_lda_real(lda_model, res) 
+                cdur,cspec = get_weights(df)
+                fin['real_cw_dur'].append(cdur)
+                fin['real_cw_spec'].append(cspec)
                             # except Exception as e:
                             #     print(f"Error processing {cue}, {beta}, sim {sim_num}: {e}")
                 print(f"Processed {cue}, {beta}")

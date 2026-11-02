@@ -11,7 +11,7 @@ module load gcc
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-export resid="dec_ex"
+export resid="dec_all"
 export err=$root/tmp/err/"$resid"_%A_%a.txt
 export out=$root/tmp/out/"$resid"_%A_%a.txt
 

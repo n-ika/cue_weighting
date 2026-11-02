@@ -21,6 +21,7 @@ def main(args):
                     corpus_root = '/fs/clip-realspeech/corpora/TIMIT/TIMIT_ORIG/',
                     n_mels = n_mels
                     )
+        extract_artfeats()
         print('done timit')
     if 'buc' in args.corpora:
         extract_buc(out_dir=root_out, 

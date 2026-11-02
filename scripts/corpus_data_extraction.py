@@ -12,25 +12,47 @@ from torch.utils.data import TensorDataset
 from sklearn.preprocessing import MinMaxScaler
 import torchaudio.functional as F
 
-class PadCollate:
-    def __init__(self, dim=1):
-        self.dim = dim
+# class PadCollate:
+#     def __init__(self, dim=1):
+#         self.dim = dim
         
+#     def __call__(self, batch):
+#         label, items = zip(*batch)
+#         max_len = max(map(lambda x: x.shape[self.dim], items))
+#         max_len = max(max_len, 20)
+
+#         padded_batch = []
+#         for data in items:
+#             pad_size = list(data.shape)
+#             pad_size[self.dim] = max_len - data.size(self.dim)
+#             padded = torch.cat([data, torch.zeros(*pad_size)], dim=self.dim)
+#             if padded.ndim < 4:
+#                 padded = padded.unsqueeze(0)
+#             padded_batch.append(padded)
+#         return torch.stack(padded_batch), label
+
+class PadCollate:
+    def __init__(self, dim=1, type_input=None, max_len=None):
+        self.dim     = dim
+        self.type_input = type_input
+        self.max_len = max_len
+
     def __call__(self, batch):
         label, items = zip(*batch)
-        max_len = max(map(lambda x: x.shape[self.dim], items))
-        max_len = max(max_len, 20)
+        max_len  = self.max_len if self.max_len is not None else 64
 
         padded_batch = []
         for data in items:
-            pad_size = list(data.shape)
+            pad_size         = list(data.shape)
             pad_size[self.dim] = max_len - data.size(self.dim)
-            padded = torch.cat([data, torch.zeros(*pad_size)], dim=self.dim)
-            if padded.ndim < 4:
-                padded = padded.unsqueeze(0)
+            padded           = torch.cat([data, torch.zeros(*pad_size)], dim=self.dim)
+            if self.type_input == 'mel' and padded.ndim < 4:
+                padded       = padded.unsqueeze(0)
             padded_batch.append(padded)
-        return torch.stack(padded_batch), label
 
+        return torch.stack(padded_batch), label 
+
+    
 class CorpusData(Dataset):
     def __init__(self, data_dict):
         self.keys = list(data_dict.keys())
@@ -381,3 +403,91 @@ def extract_wsj(out_dir='/fs/clip-realspeech/projects/speech_in_noise/me_final/d
     torch.save(data_d, f'{out_dir}wsj_{type_in}_{n_fft}_{step}.pt')
     print("FINAL Dataset saved")
     print(f"Completed all data extraction for WSJ")
+
+
+def extract_artfeats(out_dir='/fs/clip-realspeech/projects/speech_in_noise/me_final/data/',
+                    corpus_root = '/fs/clip-realspeech/projects/speech_in_noise/SSL-SI-tool/artfeats/',
+                    prefix_orig = '/fs/clip-realspeech/corpora/TIMIT/TIMIT_ORIG/',
+                    sr = 16000
+                  ):
+    type_in = 'art'
+    n_fft = int(sr*0.02)
+    step = int(sr*0.01)
+    maxs = []
+    mins = []
+    vowels = ["iy", "ih", "eh", "ey", "ae", "aa", "aw", "ay", "ah", "ao", 
+                "oy", "ow", "uh", "uw", "ux", "er", "ax", "ix", "axr", "ax-h"]
+
+    dfs = []
+    data_d = {'test':{},
+            'train':{}
+                }
+    for dir_file in os.listdir(corpus_root):
+        if dir_file.endswith('.npy'):
+            npf = np.load(corpus_root+dir_file)
+            origfile_path = prefix_orig+'/'.join(dir_file.split('_')[:-1])
+            type_dir = dir_file.split('_')[0]
+            wav = '/'.join(dir_file.split('_')[1:-1])
+            speaker = dir_file.split('_')[2]
+            phnpath = origfile_path + '.phn'
+            df_phn = pd.read_csv(phnpath, delimiter=' ', header=None, names=['start','end','phone'])
+            audio_file_path = origfile_path + '.wav'
+            all_formants = get_formants(audio_file_path)
+            if type_dir == 'train':
+                maxs.append(npf.max().item())
+                mins.append(npf.min().item())
+            for vowel in vowels:
+                df_vowel = df_phn[df_phn.phone==vowel].reset_index()
+                d_interim = {'start': [], 
+                        'end':[], 
+                        'frame_start':[], 
+                        'frame_end':[],
+                        'dur':[],
+                        'f1':[],
+                        'f2':[],
+                        'filename':[],
+                        'phone':[],
+                        'spk':[],
+                        'data_type':[]
+                        }
+                for i,start in enumerate(df_vowel['start']):
+                    name_id = wav+'_'+vowel+'_'+str(start)
+                    frame_start = int(np.floor(start/step))
+                    end = df_vowel['end'][i]
+                    frame_end = int(np.ceil(end/step))
+                    d_interim['start'].append(start)
+                    d_interim['end'].append(end)
+                    d_interim['frame_start'].append(frame_start)
+                    d_interim['frame_end'].append(frame_end)
+                    formants,dur = get_phon_data(all_formants,sr,start,end,n_formants=2)
+                    d_interim['dur'].append(dur)
+                    d_interim['f1'].append(formants[1])
+                    d_interim['f2'].append(formants[2])
+                    d_interim['filename'].append(name_id)
+                    d_interim['phone'].append(vowel)
+                    d_interim['spk'].append(speaker)
+                    d_interim['data_type'].append(type_dir)
+                    data_d[type_dir][name_id] = torch.tensor(npf[:,frame_start:frame_end],dtype=torch.float32)
+                df=pd.DataFrame(d_interim)
+                dfs.append(df)
+
+    spec_min = min(mins)
+    spec_max = max(maxs)
+    data_d['train'] = {k:(v - spec_min) / (spec_max - spec_min + 1e-6) for k,v in data_d['train'].items()}
+    data_d['test'] = {k:(v - spec_min) / (spec_max - spec_min + 1e-6) for k,v in data_d['test'].items()}
+
+    df_fin = pd.concat(dfs).reset_index()
+    del df_fin['index']
+    df_fin.to_csv(f'{out_dir}meta/tim_{type_in}_{n_fft}_{step}.csv')
+    print("Dataframe saved")
+    mapping = {label: index for index, label in enumerate(vowels)}
+
+    checkpoint = {
+        'train': data_d['train'],
+        'val': data_d['test'],
+        'min': spec_min,
+        'max': spec_max,
+        'mapping': mapping
+    }
+    torch.save(checkpoint, f'{out_dir}tim_{type_in}_{n_fft}_{step}.pt')
+    print("Dataset saved")

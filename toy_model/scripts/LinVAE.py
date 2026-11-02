@@ -10,7 +10,7 @@ import numpy as np
 
 
 class LinearVAE(nn.Module):
-    def __init__(self, N=1):
+    def __init__(self, hdim=64, N=1):
         """
         VAE  using linear layers
         
@@ -20,30 +20,31 @@ class LinearVAE(nn.Module):
         super(LinearVAE, self).__init__()
 
         self.N = N
-        
+        self.hdim = hdim
+
         self.encoder = nn.Sequential(
             # Layer 1
-            nn.Linear(2,8),
+            nn.Linear(2,hdim),
             nn.LeakyReLU(0.2),
             # Layer 2
-            nn.Linear(8,4),
+            nn.Linear(hdim,hdim),
             nn.LeakyReLU(0.2),
             
             )
         # Latent space projections
-        self.fc_mu = nn.Linear(4, 2)
-        self.fc_logvar = nn.Linear(4, 2)
+        self.fc_mu = nn.Linear(hdim, 2)
+        self.fc_logvar = nn.Linear(hdim, 2)
         # Decoder input
-        self.decoder_input = nn.Linear(2, 4)
+        self.decoder_input = nn.Linear(2, hdim)
         self.decision_layer = nn.Linear(2, self.N) #FIXME
         # Decoder
         self.decoder = nn.Sequential(
             # Layer 1
-            nn.Linear(4,8),
+            nn.Linear(hdim,hdim),
             nn.LeakyReLU(0.2),
             # Layer 2
-            nn.Linear(8,2),
-            # nn.Sigmoid()
+            nn.Linear(hdim,2),
+            nn.Sigmoid()
             )
         
     def encode(self, x):
@@ -124,32 +125,32 @@ def omega_loss(recon_x, x, mu, logvar, decision, label, device, cue='f1', weight
         Total loss, reconstruction loss, KL divergence, decision loss
     """
     d_loss = dec_loss(decision,label)
-    # Ensure that weight is between 0 and 1
-    weight = np.abs(np.clip(weight,0,1))
-    squared_diff = (recon_x - x) ** 2
-    # bce_loss = F.binary_cross_entropy(recon_x, x, reduction='mean')
-    if cue == 'f1':
-        weight1 = weight  # Weight for f1
-        weight2 = 1 - weight  # Weight for duration
-    elif cue == 'dur':
-        weight1 = 1 - weight  # Weight for f1
-        weight2 = weight  # Weight for duration
-    else:
-        weight1 = 1  # Default to weighting the first dimension
-        weight2 = 1  # Default to weighting the second dimension
-    if weight < 1.0:
-        masked_squared_diff = squared_diff * torch.tensor([weight1,weight2],dtype=torch.float32).to(device)
-        recon_loss = torch.mean(masked_squared_diff) #* 10000
-    else:
-        recon_loss = torch.mean(squared_diff) #* 10000
-    kl_div = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+    # # Ensure that weight is between 0 and 1
+    # weight = np.abs(np.clip(weight,0,1))
+    # squared_diff = (recon_x - x) ** 2
+    # # bce_loss = F.binary_cross_entropy(recon_x, x, reduction='mean')
+    # if cue == 'none':
+    #     recon_loss = torch.mean(torch.sum(squared_diff))
+    # else:
+    #     if cue == 'formants':
+    #         # print('Using formant cue weighting')
+    #         weight1 = weight  # Weight for f1
+    #         weight2 = 1 - weight  # Weight for duration
+    #     elif cue == 'duration':
+    #         weight1 = 1 - weight  # Weight for f1
+    #         weight2 = weight  # Weight for duration
+    #     masked_squared_diff = squared_diff * torch.tensor([weight1,weight2],dtype=torch.float32).to(device)
+    #     recon_loss = torch.mean(torch.sum(masked_squared_diff))
+
+    kl_div = torch.mean(-0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp()))
     # Total loss with omega modification
-    total_loss = recon_loss + beta * kl_div + d_loss
-    
-    return total_loss, recon_loss, beta * kl_div, d_loss
+    # total_loss = recon_loss + beta * kl_div + d_loss
+    total_loss =  beta * kl_div + d_loss #FIXME
+     
+    return total_loss, torch.tensor(0.0, device=x.device), beta * kl_div, d_loss #FIXME
 
 def dec_loss(decision,label):
-    if decision.ndim <= 2:
+    if decision.shape[-1] == 1:
         ce_loss = nn.BCEWithLogitsLoss()
     else:
         ce_loss = nn.CrossEntropyLoss()
